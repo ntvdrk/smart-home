@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Умный дом — житель</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 001 1h12a1 1 0 001-1V9.5"/><path d="M9 21v-6h6v6"/></svg>
+      </div>
+      <div><h1>Умный дом</h1><p>Мини-приложение · роль «Житель»</p></div>
+    </div>
+    <a class="rolelink" href="/admin" target="_blank" rel="noopener">
+      Диспетчерская
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>
+    </a>
+  </div>
+  <div class="stage" id="stage"></div>
+  <div class="foot"><span class="conn" id="conn"><span class="d"></span>подключение…</span> · тестовые данные, интеграции с ГИС ЖКХ/MAX смоделированы</div>
+  <div id="toast"></div>
+  <script type="module" src="resident.js"></script>
+</body>
+</html>

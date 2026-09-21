@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data
+    volumes:
+      - umnyy-dom-data:/app/data      # хранилище тестовых данных переживает перезапуск
+    restart: unless-stopped
+
+volumes:
+  umnyy-dom-data:
