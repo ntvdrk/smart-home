@@ -2,19 +2,32 @@ import { I } from './icons.js';
 import { api, subscribe } from './api.js';
 import { getLaunchParams } from './bridge.js';
 
+// Категории заявки (UI). backendCat — ближайший ключ каталога категорий на бэкенде
+// (см. backend/src/seed.js CATS), чтобы заявка сохранялась и попадала в статистику диспетчера.
 const CATS = {
-  avaria:  { label: 'Авария',       icon: I.drop },
-  musor:   { label: 'Вывоз мусора', icon: I.trash },
-  svet:    { label: 'Освещение',    icon: I.bulb },
-  domofon: { label: 'Домофон',      icon: I.door },
-  lift:    { label: 'Лифт',         icon: I.elevator },
-  other:   { label: 'Прочее',       icon: I.dots },
+  santeh:  { label: 'Сантехника',      icon: I.drop,     backendCat: 'avaria' },
+  elektr:  { label: 'Электрика',       icon: I.bolt,     backendCat: 'svet' },
+  domofon: { label: 'Домофон',         icon: I.door,     backendCat: 'domofon' },
+  obshee:  { label: 'Общее имущество', icon: I.elevator, backendCat: 'lift' },
+  other:   { label: 'Другое',          icon: I.dots,     backendCat: 'other' },
 };
+// Демо-каталог специалистов (в MVP бэкенд не хранит именной каталог с рейтингом —
+// диспетчер назначает мастера свободным текстом при взятии заявки в работу).
+const SPECIALISTS = [
+  { id: 'igor',   name: 'Игорь Петров',   role: 'Сантехник', rating: 4.9 },
+  { id: 'sergey', name: 'Сергей Волков',  role: 'Сантехник', rating: 4.7 },
+  { id: 'any',    name: 'Любой доступный', role: 'Назначим быстрее всего', rating: null },
+];
+const SLOT_OPTIONS = ['Сегодня', 'Завтра', 'Как можно быстрее'];
 const METER_ICON = { cold: I.drop, hot: I.fire, el: I.bolt, gas: I.gas };
 const TINT = { blue: '--tint-blue', warm: '--tint-warm', amber: '--o-bg', green: '--g-bg' };
 
-const model = { overview: null, charges: null, meters: null, requests: [], notifCount: 0 };
-const ui = { tab: 'home', newReq: { cat: 'avaria', desc: '', photo: false } };
+const model = { overview: null, charges: null, meters: null, requests: [], notifications: [], notifCount: 0 };
+const ui = { tab: 'home', selectedRequestId: null, notifOpen: false, loading: true, startError: null, newReq: { cat: 'santeh', desc: '', specialist: 'any', slot: SLOT_OPTIONS[0] } };
+
+function initials(name) {
+  return (name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+}
 
 const $ = s => document.querySelector(s);
 const money = n => n.toLocaleString('ru-RU') + ' ₽';
@@ -33,7 +46,7 @@ async function loadAll() {
   ]);
   model.overview = overview; model.charges = charges; model.meters = meters.meters;
   model.metersSubmitted = meters.submitted; model.requests = requests.requests;
-  model.notifCount = notif.notifications.length;
+  model.notifications = notif.notifications; model.notifCount = notif.notifications.length;
 }
 
 /* ---------- screens ---------- */
@@ -52,9 +65,17 @@ function screenHome() {
       <div class="etxt"><div class="et">${e.title}</div><div class="es">${e.sub}</div></div></div>`;
   }).join('') || `<div class="evt ok"><div class="eic">${I.check}</div><div class="etxt"><div class="et">Всё в порядке</div><div class="es">Активных напоминаний нет</div></div></div>`;
   const bellDot = model.notifCount ? '<span class="dot"></span>' : '';
+  const notifPanel = ui.notifOpen ? `
+    <div class="notif-panel">
+      <div class="notif-head"><span>Уведомления</span><button data-action="close-notif">${I.back}</button></div>
+      ${model.notifications.length
+        ? model.notifications.map(n => `<div class="notif-item"><div class="ni-ic">${I.msg}</div>
+            <div><div class="ni-text">${n.text}</div><div class="ni-date">${n.date}</div></div></div>`).join('')
+        : `<div class="notif-empty">Пока нет уведомлений</div>`}
+    </div>` : '';
   return `
-    <div class="apphead" style="padding-bottom:6px"><div class="grow"></div>
-      <button class="iconbtn" data-action="noop">${bellDot}${I.bell}</button></div>
+    <div class="apphead" style="padding-bottom:6px;position:relative"><div class="grow"></div>
+      <button class="iconbtn" data-action="toggle-notif">${bellDot}${I.bell}</button>${notifPanel}</div>
     <div class="card greet"><div><div class="addr">${o.user.addr}</div>
       <div class="hi">Здравствуйте,<br>${o.user.name}</div></div></div>
     ${debtCard}
@@ -103,7 +124,7 @@ function screenRequests() {
   const list = model.requests.map(r => {
     const st = { new: ['Новая', 'new'], progress: ['В работе', 'prog'], done: ['Выполнено', 'done'] }[r.status];
     const msg = r.adminMsg ? `<div class="rmsg">${I.msg}<span>${r.adminMsg}</span></div>` : '';
-    return `<div class="req"><div style="min-width:0">
+    return `<div class="req" style="cursor:pointer" data-action="open-request" data-id="${r.id}"><div style="min-width:0">
       <div class="rt">${r.title}</div>
       <div class="rm">№${r.id} · ${r.date} · ${r.catLabel}</div>${msg}</div>
       <span class="badge ${st[1]}">${st[0]}</span></div>`;
@@ -112,19 +133,86 @@ function screenRequests() {
     <button class="iconbtn" style="background:var(--navy);border:none;color:#fff" data-action="new-request">${I.plus}</button></div>${list}`;
 }
 
+function timelineHtml(r) {
+  const steps = [
+    { label: 'Заявка принята', sub: r.date, state: 'done' },
+    { label: 'Специалист назначен', sub: r.specialist || '', state: r.specialist ? 'done' : 'pending' },
+    { label: 'В пути', sub: r.status === 'progress' && r.slot ? 'Ожидается к ' + r.slot : '', state: r.status === 'progress' ? 'active' : r.status === 'done' ? 'done' : 'pending' },
+    { label: 'Выполнена', sub: r.status === 'done' ? (r.resolution || '') : '', state: r.status === 'done' ? 'done' : 'pending' },
+  ];
+  return steps.map(s => `<div class="tl-item ${s.state}">
+    <div class="tl-dot">${s.state === 'done' ? I.check : ''}</div>
+    <div class="tl-text"><div class="tl-label">${s.label}</div>${s.sub ? `<div class="tl-sub">${s.sub}</div>` : ''}</div></div>`).join('');
+}
+
+function screenRequestDetail() {
+  const r = model.requests.find(x => x.id === ui.selectedRequestId);
+  if (!r) return screenRequests();
+  const known = SPECIALISTS.find(s => r.specialist && r.specialist.startsWith(s.name.split(' ')[0]));
+  const rating = known?.rating || (r.specialist ? 4.8 : null);
+  const specHtml = r.specialist ? `
+    <div class="spec-row">
+      <div class="spec-avatar">${initials(r.specialist)}</div>
+      <div class="spec-info"><div class="spec-name">${r.specialist}</div>
+        <div class="spec-role">${r.specialty || ''}${rating ? ' · ' + I.star + ' ' + rating : ''}</div></div>
+      <button class="spec-call" data-action="demo-call">${I.phone}</button>
+    </div>` : '';
+  return `<div class="apphead"><button class="back" data-action="tab" data-tab="requests">${I.back}</button><h2>Заявка №${r.id}</h2></div>
+    <div class="card" style="padding:16px 18px;margin-bottom:12px">
+      <div class="rt" style="font-size:16px">${r.title}</div>
+      <div class="rm" style="margin-top:5px">${r.apt || ''} · ${r.catLabel}</div>
+    </div>
+    <div class="card" style="padding:16px 18px 12px;margin-bottom:12px"><div class="timeline">${timelineHtml(r)}</div></div>
+    ${specHtml}
+    <div class="detail-actions">
+      <button class="btn-ghost" data-action="demo-chat">Написать в чат</button>
+      <button class="btn-danger-outline" data-action="demo-complain">${I.flag}Пожаловаться</button>
+    </div>`;
+}
+
 function screenNewRequest() {
-  const chips = Object.entries(CATS).map(([k, c]) => `
+  const catChips = Object.entries(CATS).map(([k, c]) => `
     <button class="chip ${ui.newReq.cat === k ? 'sel' : ''}" data-action="pick-cat" data-cat="${k}">${c.icon}${c.label}</button>`).join('');
-  const att = ui.newReq.photo
-    ? `<div class="attach on">${I.check} Фото прикреплено (демо)</div>`
-    : `<button class="attach" data-action="attach-photo">${I.plus} Прикрепить фото</button>`;
+  const specCards = SPECIALISTS.map(s => `
+    <button class="spec-card ${ui.newReq.specialist === s.id ? 'sel' : ''}" data-action="pick-spec" data-spec="${s.id}">
+      <div class="spec-avatar ${s.id === 'any' ? 'any' : ''}">${s.id === 'any' ? '?' : initials(s.name)}</div>
+      <div class="spec-info"><div class="spec-name">${s.name}</div><div class="spec-role">${s.role}</div></div>
+      ${s.rating ? `<span class="spec-rating">${I.star}${s.rating}</span>` : ''}
+    </button>`).join('');
+  const slotChips = SLOT_OPTIONS.map(s => `
+    <button class="chip ${ui.newReq.slot === s ? 'sel' : ''}" data-action="pick-slot" data-slot="${s}">${s}</button>`).join('');
   return `<div class="apphead"><button class="back" data-action="cancel-request">${I.back}</button><h2>Новая заявка</h2></div>
-    <div class="field-lbl">Что случилось?</div><div class="chips">${chips}</div>
-    <div class="field-lbl">Опишите проблему</div>
-    <textarea class="inp" id="req-desc" placeholder="Например: прорвало трубу в ванной, вода уходит под пол…">${ui.newReq.desc}</textarea>
-    ${att}<div style="height:14px"></div>
-    <button class="btn-navy" data-action="submit-request">Отправить заявку</button>
-    <div class="plabel" style="margin-top:12px">Заявка уйдёт диспетчеру УК. Ответ придёт в чат MAX.</div>`;
+    <div class="field-lbl" style="margin-top:2px">Что случилось?</div>
+    <textarea class="inp" id="req-desc" placeholder="Опишите проблему подробно">${ui.newReq.desc}</textarea>
+    <div class="field-lbl">Тип проблемы</div><div class="chips">${catChips}</div>
+    <div class="field-lbl">Выберите специалиста</div><div class="spec-list">${specCards}</div>
+    <div class="field-lbl">Когда вам удобно?</div><div class="chips slot-row">${slotChips}</div>
+    <div class="notice-green">Работы по заявкам ЖКУ бесплатны — тариф уже включён в квитанцию. Если специалист требует оплату наличными, укажите это в заявке или пожалуйтесь после визита.</div>
+    <button class="btn-navy" data-action="submit-request" style="margin-top:14px">Отправить заявку</button>`;
+}
+
+function skeletonPhone() {
+  const bar = (w) => `<div class="sk-bar" style="width:${w}"></div>`;
+  return `
+    <div class="phone-wrap"><div class="phone">
+      <div class="statusbar"><span>9:41</span><div class="dots">${I.wifi}${I.battery}</div></div>
+      <div class="maxbar"><span class="mx"><b>MAX</b> Умный дом</span><span>· вход через бота</span></div>
+      <div class="screen">
+        <div class="apphead" style="padding-bottom:6px"><div class="grow"></div><div class="sk-circle"></div></div>
+        <div class="sk-card" style="height:70px">${bar('40%')}${bar('70%')}</div>
+        <div class="sk-card" style="height:96px;margin-top:12px">${bar('50%')}${bar('30%')}</div>
+        <div class="tiles" style="margin-top:14px">
+          <div class="sk-tile"></div><div class="sk-tile"></div><div class="sk-tile"></div>
+        </div>
+        <div class="sk-card" style="height:56px">${bar('60%')}</div>
+      </div>
+      <div class="bnav"></div>
+    </div></div>`;
+}
+
+function errorScreen(message) {
+  return `<div class="empty" style="margin:60px auto">${I.warn}<p>Не удалось загрузить данные.<br>${message}</p>
+    <button class="btn-navy" style="margin-top:16px;width:auto;padding:12px 22px" data-action="retry-start">Повторить</button></div>`;
 }
 
 function currentScreen() {
@@ -133,20 +221,22 @@ function currentScreen() {
     case 'payments': return screenPayments();
     case 'requests': return screenRequests();
     case 'new': return screenNewRequest();
+    case 'request-detail': return screenRequestDetail();
     default: return screenHome();
   }
 }
 
 function render() {
-  if (!model.overview) return;
+  if (ui.startError) { $('#stage').innerHTML = errorScreen(ui.startError); return; }
+  if (!model.overview) { $('#stage').innerHTML = skeletonPhone(); return; }
   const nav = [['home', I.home, 'Главная'], ['meters', I.gauge, 'Счётчики'], ['payments', I.card, 'Платежи'], ['requests', I.pencil, 'Заявки']];
-  const active = ui.tab === 'new' ? 'requests' : ui.tab;
+  const active = (ui.tab === 'new' || ui.tab === 'request-detail') ? 'requests' : ui.tab;
   const navHtml = nav.map(n => `<button class="${active === n[0] ? 'active' : ''}" data-action="tab" data-tab="${n[0]}">${n[1]}<span>${n[2]}</span></button>`).join('');
   $('#stage').innerHTML = `
     <div class="phone-wrap"><div class="phone">
       <div class="statusbar"><span>9:41</span><div class="dots">${I.wifi}${I.battery}</div></div>
       <div class="maxbar"><span class="mx"><b>MAX</b> Умный дом</span><span>· вход через бота</span></div>
-      <div class="screen">${currentScreen()}</div>
+      <div class="screen"><div class="fade-in" key="${ui.tab}">${currentScreen()}</div></div>
       <div class="bnav">${navHtml}</div>
     </div></div>`;
 }
@@ -161,15 +251,27 @@ document.addEventListener('click', async e => {
     switch (a) {
       case 'tab': ui.tab = b.dataset.tab; render(); break;
       case 'go-pay': ui.tab = 'payments'; render(); break;
-      case 'new-request': ui.newReq = { cat: 'avaria', desc: '', photo: false }; ui.tab = 'new'; render(); break;
+      case 'new-request': ui.newReq = { cat: 'santeh', desc: '', specialist: 'any', slot: SLOT_OPTIONS[0] }; ui.tab = 'new'; render(); break;
       case 'cancel-request': ui.tab = 'requests'; render(); break;
+      case 'open-request': ui.selectedRequestId = Number(b.dataset.id); ui.tab = 'request-detail'; render(); break;
       case 'pick-cat': captureDesc(); ui.newReq.cat = b.dataset.cat; render(); break;
-      case 'attach-photo': captureDesc(); ui.newReq.photo = true; render(); toast('Фото прикреплено'); break;
+      case 'pick-spec': captureDesc(); ui.newReq.specialist = b.dataset.spec; render(); break;
+      case 'pick-slot': captureDesc(); ui.newReq.slot = b.dataset.slot; render(); break;
+      case 'demo-chat': toast('Чат с диспетчером откроется в MAX'); break;
+      case 'demo-complain': toast('Жалоба отправлена диспетчеру'); break;
+      case 'demo-call': toast('Звонок специалисту (демо)'); break;
+      case 'toggle-notif': ui.notifOpen = !ui.notifOpen; render(); break;
+      case 'close-notif': ui.notifOpen = false; render(); break;
       case 'submit-request': {
         captureDesc();
         const desc = ui.newReq.desc.trim();
         if (!desc) { toast('Опишите проблему', true); break; }
-        const { request } = await api.createRequest(ui.newReq.cat, desc);
+        const specialist = SPECIALISTS.find(s => s.id === ui.newReq.specialist);
+        const extra = [];
+        if (specialist && specialist.id !== 'any') extra.push('Желаемый специалист: ' + specialist.name);
+        extra.push('Когда удобно: ' + ui.newReq.slot);
+        const fullDesc = desc + '\n\n' + extra.join('; ');
+        const { request } = await api.createRequest(CATS[ui.newReq.cat].backendCat, fullDesc);
         await loadAll(); ui.tab = 'requests'; render();
         toast('Заявка №' + request.id + ' создана');
         break;
@@ -188,6 +290,7 @@ document.addEventListener('click', async e => {
       }
       case 'pay-now': await api.pay(); await loadAll(); render(); toast('Оплата прошла успешно'); break;
       case 'noop': break;
+      case 'retry-start': start(); break;
     }
   } catch (err) { toast(err.message || 'Ошибка', true); }
 });
@@ -196,17 +299,23 @@ document.addEventListener('click', async e => {
 function setConn(on) { const c = $('#conn'); c.className = 'conn' + (on ? ' on' : ''); c.innerHTML = '<span class="d"></span>' + (on ? 'обновления в реальном времени' : 'переподключение…'); }
 
 async function start() {
+  ui.startError = null;
+  render(); // показываем скелетон, пока грузим данные
   try {
     const launchParams = await getLaunchParams();
     await api.auth(launchParams);           // вход через MAX (или DEV-режим)
     await loadAll();
     render();
-    const es = subscribe(async () => { await loadAll(); render(); });
+    const es = subscribe(async (name, data) => {
+      try { await loadAll(); render(); }
+      catch (err) { toast('Не удалось обновить данные: ' + (err.message || 'ошибка сети'), true); }
+    });
     es.onopen = () => setConn(true);
     es.onerror = () => setConn(false);
     setConn(true);
   } catch (err) {
-    $('#stage').innerHTML = `<div class="empty" style="margin:60px auto">${I.warn}<p>Не удалось загрузить данные.<br>${err.message}</p></div>`;
+    ui.startError = err.message || 'Ошибка сети';
+    render();
   }
 }
 start();

@@ -204,6 +204,52 @@
   .attach svg{width:17px;height:17px}
   .attach.on{border-style:solid;border-color:#cfe6d6;background:#f6fbf7;color:var(--g-ink)}
 
+  /* специалисты (выбор в заявке + карточка в заявке) */
+  .spec-list{display:flex;flex-direction:column;gap:8px}
+  .spec-card{display:flex;align-items:center;gap:11px;width:100%;background:#fff;border:1px solid var(--line-2);border-radius:14px;padding:10px 13px;text-align:left;transition:background .12s,border-color .12s}
+  .spec-card.sel{background:var(--navy);border-color:var(--navy)}
+  .spec-avatar{width:38px;height:38px;border-radius:50%;background:var(--surface-alt);color:var(--navy);display:grid;place-items:center;font-weight:700;font-size:12.5px;flex:none}
+  .spec-avatar.any{color:var(--muted)}
+  .spec-card.sel .spec-avatar{background:rgba(255,255,255,.16);color:#fff}
+  .spec-info{flex:1;min-width:0}
+  .spec-name{font-size:13.5px;font-weight:700;line-height:1.3}
+  .spec-role{font-size:11.5px;color:var(--ink-soft);margin-top:2px;display:flex;align-items:center;gap:4px}
+  .spec-role svg{width:12px;height:12px;color:var(--amber)}
+  .spec-card.sel .spec-name{color:#fff}
+  .spec-card.sel .spec-role{color:rgba(255,255,255,.72)}
+  .spec-rating{display:flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;color:var(--amber-press);flex:none}
+  .spec-rating svg{width:14px;height:14px;color:var(--amber)}
+  .spec-card.sel .spec-rating{color:#ffd98a}
+  .slot-row{flex-wrap:nowrap}
+  .slot-row .chip{flex:1;justify-content:center;padding:11px 6px;text-align:center}
+  .notice-green{background:var(--g-bg);color:var(--g-ink);border-radius:12px;padding:12px 14px;font-size:12.5px;line-height:1.55;margin-top:16px}
+
+  /* карточка заявки — таймлайн статуса */
+  .timeline{display:flex;flex-direction:column}
+  .tl-item{display:flex;gap:12px;position:relative;padding-bottom:20px}
+  .tl-item:last-child{padding-bottom:0}
+  .tl-item:not(:last-child)::after{content:"";position:absolute;left:10px;top:22px;bottom:-4px;width:2px;background:var(--line)}
+  .tl-item.done:not(:last-child)::after{background:var(--g-bg)}
+  .tl-dot{width:21px;height:21px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--line);color:#fff;z-index:1}
+  .tl-dot svg{width:12px;height:12px}
+  .tl-item.done .tl-dot{background:var(--g-ink)}
+  .tl-item.active .tl-dot{background:var(--navy)}
+  .tl-label{font-size:14px;font-weight:600;line-height:1.3}
+  .tl-item.pending .tl-label{color:var(--muted);font-weight:500}
+  .tl-item.active .tl-label{color:var(--navy)}
+  .tl-sub{font-size:12px;color:var(--ink-soft);margin-top:2px}
+
+  /* карточка специалиста в заявке + кнопки действий */
+  .spec-row{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+  .spec-row .spec-avatar{width:42px;height:42px;background:var(--navy);color:#fff;font-size:13px}
+  .spec-call{width:38px;height:38px;border-radius:50%;background:var(--g-bg);color:var(--g-ink);display:grid;place-items:center;flex:none}
+  .spec-call svg{width:17px;height:17px}
+  .detail-actions{display:flex;gap:10px;margin-top:4px}
+  .detail-actions button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px}
+  .btn-danger-outline{background:#fff;border:1px solid #f0c9c0;color:#B4472F;font-weight:600;font-size:14px;border-radius:13px;padding:13px;transition:border-color .15s,background .15s}
+  .btn-danger-outline svg{width:15px;height:15px}
+  .btn-danger-outline:hover{background:#fdf3f1;border-color:#e6a998}
+
   /* bottom nav */
   .bnav{position:absolute;left:0;right:0;bottom:0;height:64px;background:rgba(250,247,240,.94);backdrop-filter:blur(8px);border-top:1px solid var(--line);display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px))}
   .bnav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);font-size:10.5px;font-weight:600;border-radius:12px}
@@ -305,6 +351,33 @@
   #toast.err{background:#B4472F}
 
   .foot{max-width:1120px;margin:0 auto;padding:4px 20px 30px;font-size:12px;color:var(--muted);text-align:center}
+
+  /* уведомления (колокольчик) */
+  .notif-panel{position:absolute;top:46px;right:0;left:0;background:#fff;border:1px solid var(--line-2);border-radius:14px;box-shadow:0 16px 36px -14px rgba(38,57,77,.28);z-index:30;max-height:280px;overflow-y:auto;animation:notifIn .15s ease-out}
+  @keyframes notifIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+  .notif-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:13px;font-weight:700;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff}
+  .notif-head button{width:26px;height:26px;border-radius:8px;background:var(--surface-alt);display:grid;place-items:center;transform:rotate(180deg)}
+  .notif-head button svg{width:13px;height:13px}
+  .notif-item{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);align-items:flex-start}
+  .notif-item:last-child{border-bottom:none}
+  .ni-ic{width:28px;height:28px;border-radius:8px;background:var(--tint-blue);color:var(--tint-blue-ink);display:grid;place-items:center;flex:none}
+  .ni-ic svg{width:14px;height:14px}
+  .ni-text{font-size:12.5px;line-height:1.4}
+  .ni-date{font-size:11px;color:var(--muted);margin-top:2px}
+  .notif-empty{padding:22px 14px;text-align:center;font-size:12.5px;color:var(--muted)}
+
+  /* скелетон первой загрузки */
+  .sk-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;justify-content:center;gap:10px;margin-bottom:0}
+  .sk-bar{height:11px;border-radius:6px;background:linear-gradient(90deg,#ECE7DA 25%,#F5F1E7 37%,#ECE7DA 63%);background-size:400% 100%;animation:skShine 1.4s ease-in-out infinite}
+  .sk-circle{width:38px;height:38px;border-radius:12px;background:#ECE7DA;animation:skShine 1.4s ease-in-out infinite}
+  .sk-tile{height:76px;border-radius:14px;background:#ECE7DA;animation:skShine 1.4s ease-in-out infinite}
+  @keyframes skShine{0%{background-position:100% 0}100%{background-position:0 0}}
+  @media(prefers-reduced-motion:reduce){.sk-bar,.sk-circle,.sk-tile{animation:none}}
+
+  /* плавный переход между экранами */
+  .fade-in{animation:screenFade .18s ease-out}
+  @keyframes screenFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+  @media(prefers-reduced-motion:reduce){.fade-in{animation:none}}
 
 /* ---------- two-page layout additions ---------- */
 .topbar a.rolelink{font-size:13px;font-weight:600;color:var(--navy);text-decoration:none;background:#fff;border:1px solid var(--line-2);padding:8px 14px;border-radius:11px;display:inline-flex;align-items:center;gap:7px}
