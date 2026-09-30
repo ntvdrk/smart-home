@@ -1,61 +1,66 @@
-# Передача проекта в Claude Code
+# Техническая справка
 
-Этот файл — краткая вводная для продолжения работы над MVP в Claude Code (или другом
-редакторе). Проект уже **запускается и работает целиком** локально.
+Краткий обзор архитектуры и API проекта «Умный дом». Пользовательская инструкция и
+запуск — в `README.md`.
 
-## Что уже сделано
+## Статус
 
-- Бэкенд (Node + Express): REST API, живые обновления (SSE), файловое хранилище,
-  проверка подписи входа MAX, интеграция с Bot API (long polling + отправка сообщений,
-  заглушка без токена). Проверено вручную — все эндпоинты отвечают.
-- Фронтенд (статические ES-модули): мини-приложение жителя (Главная, Счётчики, Платежи,
-  Заявки) и диспетчерская панель УК. Обе роли работают с общими данными, синхронизация
-  через SSE.
-- Docker: `Dockerfile`, `compose.yaml`, `.dockerignore`, `.env.example`.
-- README по формату сдачи хакатона.
+Готово и развёрнуто онлайн (Render). Реализовано:
+- Заявки жителя: создание, статус-таймлайн, назначение специалиста и времени, сообщения,
+  закрытие.
+- Жалобы жителя: подача (тема + текст, привязка к заявке), ответ диспетчера.
+- Счётчики: передача показаний с расчётом расхода; просмотр у диспетчера.
+- Платежи: начисления, история, оплата.
+- Живые обновления между ролями (SSE).
+- Интеграция с MAX: MAX Bridge на клиенте, проверка подписи входа, бот (long polling +
+  отправка сообщений жителю).
+- Вход диспетчера по паролю; роли житель/диспетчер разведены.
 
 ## Как запустить
 
 ```bash
-npm install && npm start        # http://localhost:3000  и  /admin
+npm install && npm start        # http://localhost:3000  (житель)  /admin (диспетчер)
 # или
 docker compose up --build
 ```
+Подробнее (DEV/MAX-режимы, переменные, деплой) — в `README.md`.
 
-## Контракт API (уже реализован)
+## Контракт API
 
-- `POST /api/auth {launchParams}` → вход по подписи MAX (или DEV-режим).
-- `GET  /api/overview` → житель: пользователь, задолженность, лента событий.
-- `GET  /api/charges` · `POST /api/payments/pay` → начисления, история, оплата.
-- `GET  /api/meters` · `POST /api/meters {readings:[{meterId,value}]}` → счётчики.
-- `GET  /api/requests?scope=mine|all` · `POST /api/requests {cat,desc}` → заявки.
-- `PATCH /api/requests/:id {action:"dispatch"|"message"|"done", ...}` → действия диспетчера.
-- `GET  /api/admin/readings` · `GET /api/notifications` · `GET /api/dictionaries`.
-- `GET  /api/events` → SSE: `request.created`, `request.updated`, `meters.submitted`, `payment.paid`.
+Общее:
+- `POST /api/auth {launchParams}` — вход по подписи MAX; вне MAX — DEV/демо
+  (если `ALLOW_DEMO_LOGIN=1`), иначе 401.
+- `GET  /api/overview` — пользователь, задолженность, лента событий.
+- `GET  /api/charges` · `POST /api/payments/pay` — начисления, история, оплата.
+- `GET  /api/meters` · `POST /api/meters {readings:[{meterId,value}]}` — счётчики.
+- `GET  /api/requests?scope=mine` · `POST /api/requests {cat,desc}` — заявки жителя.
+- `GET  /api/complaints?scope=mine` · `POST /api/complaints {topic,text,requestId?}` — жалобы жителя.
+- `GET  /api/notifications` — уведомления жителя.
+- `GET  /api/dictionaries` — справочники (специальности, слоты, категории, темы жалоб).
+- `GET  /api/events` — SSE: `request.created`, `request.updated`, `meters.submitted`,
+  `payment.paid`, `complaint.created`, `complaint.updated`.
 
-## Специфика MAX (для доработки под платформу)
+Диспетчер (требуют вход, заголовок `x-admin-token`):
+- `POST /api/admin/login {password}` — вход, возвращает токен сессии.
+- `GET  /api/requests?scope=all` · `PATCH /api/requests/:id {action:"dispatch"|"message"|"done", ...}`.
+- `GET  /api/complaints?scope=all` · `PATCH /api/complaints/:id {reply}`.
+- `GET  /api/admin/readings` — переданные показания.
 
-- Мини-приложение привязывается к чат-боту по HTTPS-URL в кабинете business.max.ru.
-- Официальный JS SDK бота: `@maxhub/max-bot-api`. Bot API: `https://platform-api.max.ru`,
-  токен в заголовке `Authorization`.
-- Клиент получает стартовые данные через MAX Bridge; проверка подписи — в
-  `backend/src/max/validate.js` (алгоритм dev.max.ru/docs/webapps/validation).
-- Перед сдачей сверяться с актуальной документацией dev.max.ru (API часто меняется).
+## Специфика MAX
 
-## Что осталось (задачи для Claude Code)
+- Мини-приложение привязывается к чат-боту по HTTPS-URL (кабинет business.max.ru или
+  через форму хакатона).
+- Bot API: `https://platform-api.max.ru`, токен в заголовке `Authorization`. Официальный
+  JS SDK бота: `@maxhub/max-bot-api`.
+- Клиент получает стартовые данные через MAX Bridge (`https://st.max.ru/js/max-web-app.js`);
+  проверка подписи — `backend/src/max/validate.js` (алгоритм dev.max.ru/docs/webapps/validation).
+  `user_id` берётся только из провалидированных данных.
+- Платформа MAX меняется — сверяйтесь с актуальной документацией dev.max.ru.
 
-1. **Реальный токен MAX.** Зарегистрировать бота, задать `MAX_BOT_TOKEN` и `MINIAPP_URL`
-   в `.env`, проверить long polling и отправку сообщений жителю.
-2. **Хостинг по HTTPS** мини-приложения (для проверки внутри MAX). Указать URL в кабинете.
-3. **(Опционально) Переписать фронтенд на React + MAX UI.** API-контракт не меняется —
-   переносятся только экраны из `frontend/public/*.js`.
-4. **Роли и вход диспетчера** — сейчас упрощены; добавить авторизацию сотрудника УК.
-5. **Презентация PDF** по структуре из задания (первый слайд — технические данные для проверки).
-6. Тесты основных эндпоинтов и обработка ошибок сети на фронте.
+## Идеи для развития
 
-## Первый промпт для Claude Code (пример)
-
-> Это MVP мини-приложения в MAX для управления МКД. Прочитай README.md и HANDOFF.md.
-> Проект запускается через `npm start`. Помоги: (1) подключить реальный токен бота MAX и
-> проверить отправку уведомлений жителю; (2) добавить простую авторизацию диспетчера;
-> (3) не менять контракт API. Объясняй шаги по-русски, я начинающий разработчик.
+- Полноценные учётные записи сотрудников УК (вместо общего пароля) и несколько домов/жителей.
+- Замена файлового хранилища на СУБД (PostgreSQL) — контракт API не меняется.
+- Перенос фронтенда на React + MAX UI (экраны из `frontend/public/*.js`).
+- Реальные интеграции: ГИС ЖКХ (начисления по адресу), эквайринг для оплаты.
+- Загрузка фото к заявке, push-уведомления, оценка качества выполнения.
