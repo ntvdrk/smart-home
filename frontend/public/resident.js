@@ -22,8 +22,22 @@ const SLOT_OPTIONS = ['Сегодня', 'Завтра', 'Как можно бы�
 const METER_ICON = { cold: I.drop, hot: I.fire, el: I.bolt, gas: I.gas };
 const TINT = { blue: '--tint-blue', warm: '--tint-warm', amber: '--o-bg', green: '--g-bg' };
 
-const model = { overview: null, charges: null, meters: null, requests: [], notifications: [], notifCount: 0 };
-const ui = { tab: 'home', selectedRequestId: null, notifOpen: false, loading: true, startError: null, newReq: { cat: 'santeh', desc: '', specialist: 'any', slot: SLOT_OPTIONS[0] } };
+// Темы жалоб (совпадают с ключами COMPLAINT_TOPICS на бэкенде).
+const COMPLAINT_TOPICS = {
+  quality:  'Качество работ',
+  behavior: 'Поведение сотрудника',
+  deadline: 'Сроки',
+  payment:  'Поборы / оплата',
+  cleaning: 'Уборка и содержание',
+  other:    'Другое',
+};
+
+const model = { overview: null, charges: null, meters: null, requests: [], complaints: [], notifications: [], notifCount: 0 };
+const ui = {
+  tab: 'home', reqTab: 'requests', selectedRequestId: null, notifOpen: false, loading: true, startError: null,
+  newReq: { cat: 'santeh', desc: '', specialist: 'any', slot: SLOT_OPTIONS[0] },
+  newComplaint: { topic: 'quality', text: '', requestId: null },
+};
 
 function initials(name) {
   return (name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
@@ -41,11 +55,12 @@ function toast(msg, err) {
 }
 
 async function loadAll() {
-  const [overview, charges, meters, requests, notif] = await Promise.all([
-    api.overview(), api.charges(), api.meters(), api.requests('mine'), api.notifications(),
+  const [overview, charges, meters, requests, complaints, notif] = await Promise.all([
+    api.overview(), api.charges(), api.meters(), api.requests('mine'), api.complaints('mine'), api.notifications(),
   ]);
   model.overview = overview; model.charges = charges; model.meters = meters.meters;
   model.metersSubmitted = meters.submitted; model.requests = requests.requests;
+  model.complaints = complaints.complaints;
   model.notifications = notif.notifications; model.notifCount = notif.notifications.length;
 }
 
@@ -121,6 +136,34 @@ function screenPayments() {
 }
 
 function screenRequests() {
+  const isReq = ui.reqTab !== 'complaints';
+  const toggle = `<div class="subtabs">
+    <button class="${isReq ? 'active' : ''}" data-action="req-tab" data-t="requests">Заявки</button>
+    <button class="${!isReq ? 'active' : ''}" data-action="req-tab" data-t="complaints">Жалобы</button></div>`;
+  const addAction = isReq ? 'new-request' : 'new-complaint';
+  const head = `<div class="apphead"><h2>${isReq ? 'Заявки' : 'Жалобы'}</h2><div class="grow"></div>
+    <button class="iconbtn" style="background:var(--navy);border:none;color:#fff" data-action="${addAction}">${I.plus}</button></div>${toggle}`;
+
+  if (!isReq) {
+    if (!model.complaints.length) {
+      return head + `<div class="empty" style="margin:30px auto">${I.flag}<p>Жалоб пока нет.<br>Нажмите «+», если что-то не устроило.</p></div>`;
+    }
+    const list = model.complaints.map(c => {
+      const st = c.status === 'answered' ? ['Отвечено', 'done'] : ['Открыта', 'prog'];
+      const reply = c.reply ? `<div class="rmsg">${I.msg}<span>${c.reply}</span></div>` : '';
+      const link = c.requestId ? ` · по заявке №${c.requestId}` : '';
+      return `<div class="req"><div style="min-width:0">
+        <div class="rt">${c.topicLabel}</div>
+        <div class="rm">№${c.id} · ${c.date}${link}</div>
+        <div class="ctext">${c.text}</div>${reply}</div>
+        <span class="badge ${st[1]}">${st[0]}</span></div>`;
+    }).join('');
+    return head + list;
+  }
+
+  if (!model.requests.length) {
+    return head + `<div class="empty" style="margin:30px auto">${I.folder}<p>Заявок пока нет.<br>Нажмите «+», чтобы создать.</p></div>`;
+  }
   const list = model.requests.map(r => {
     const st = { new: ['Новая', 'new'], progress: ['В работе', 'prog'], done: ['Выполнено', 'done'] }[r.status];
     const msg = r.adminMsg ? `<div class="rmsg">${I.msg}<span>${r.adminMsg}</span></div>` : '';
@@ -129,8 +172,7 @@ function screenRequests() {
       <div class="rm">№${r.id} · ${r.date} · ${r.catLabel}</div>${msg}</div>
       <span class="badge ${st[1]}">${st[0]}</span></div>`;
   }).join('');
-  return `<div class="apphead"><h2>Заявки</h2><div class="grow"></div>
-    <button class="iconbtn" style="background:var(--navy);border:none;color:#fff" data-action="new-request">${I.plus}</button></div>${list}`;
+  return head + list;
 }
 
 function timelineHtml(r) {
@@ -166,7 +208,7 @@ function screenRequestDetail() {
     ${specHtml}
     <div class="detail-actions">
       <button class="btn-ghost" data-action="demo-chat">Написать в чат</button>
-      <button class="btn-danger-outline" data-action="demo-complain">${I.flag}Пожаловаться</button>
+      <button class="btn-danger-outline" data-action="complain-request" data-id="${r.id}">${I.flag}Пожаловаться</button>
     </div>`;
 }
 
@@ -189,6 +231,20 @@ function screenNewRequest() {
     <div class="field-lbl">Когда вам удобно?</div><div class="chips slot-row">${slotChips}</div>
     <div class="notice-green">Работы по заявкам ЖКУ бесплатны — тариф уже включён в квитанцию. Если специалист требует оплату наличными, укажите это в заявке или пожалуйтесь после визита.</div>
     <button class="btn-navy" data-action="submit-request" style="margin-top:14px">Отправить заявку</button>`;
+}
+
+function screenNewComplaint() {
+  const topicChips = Object.entries(COMPLAINT_TOPICS).map(([k, label]) => `
+    <button class="chip ${ui.newComplaint.topic === k ? 'sel' : ''}" data-action="pick-topic" data-topic="${k}">${label}</button>`).join('');
+  const linked = ui.newComplaint.requestId
+    ? `<div class="notice-blue">${I.flag} Жалоба по заявке №${ui.newComplaint.requestId}</div>` : '';
+  return `<div class="apphead"><button class="back" data-action="cancel-complaint">${I.back}</button><h2>Новая жалоба</h2></div>
+    ${linked}
+    <div class="field-lbl" style="margin-top:2px">Тема жалобы</div><div class="chips">${topicChips}</div>
+    <div class="field-lbl">Опишите, что произошло</div>
+    <textarea class="inp" id="cmp-text" placeholder="Например: мастер не пришёл в назначенное время и не предупредил">${ui.newComplaint.text}</textarea>
+    <div class="notice-green">Диспетчер рассмотрит жалобу и ответит вам — ответ придёт в MAX и появится здесь.</div>
+    <button class="btn-navy" data-action="submit-complaint" style="margin-top:14px">Отправить жалобу</button>`;
 }
 
 function skeletonPhone() {
@@ -221,6 +277,7 @@ function currentScreen() {
     case 'payments': return screenPayments();
     case 'requests': return screenRequests();
     case 'new': return screenNewRequest();
+    case 'new-complaint': return screenNewComplaint();
     case 'request-detail': return screenRequestDetail();
     default: return screenHome();
   }
@@ -230,7 +287,7 @@ function render() {
   if (ui.startError) { $('#stage').innerHTML = errorScreen(ui.startError); return; }
   if (!model.overview) { $('#stage').innerHTML = skeletonPhone(); return; }
   const nav = [['home', I.home, 'Главная'], ['meters', I.gauge, 'Счётчики'], ['payments', I.card, 'Платежи'], ['requests', I.pencil, 'Заявки']];
-  const active = (ui.tab === 'new' || ui.tab === 'request-detail') ? 'requests' : ui.tab;
+  const active = (ui.tab === 'new' || ui.tab === 'new-complaint' || ui.tab === 'request-detail') ? 'requests' : ui.tab;
   const navHtml = nav.map(n => `<button class="${active === n[0] ? 'active' : ''}" data-action="tab" data-tab="${n[0]}">${n[1]}<span>${n[2]}</span></button>`).join('');
   $('#stage').innerHTML = `
     <div class="phone-wrap"><div class="phone">
@@ -242,6 +299,7 @@ function render() {
 }
 
 function captureDesc() { const t = $('#req-desc'); if (t) ui.newReq.desc = t.value; }
+function captureComplaint() { const t = $('#cmp-text'); if (t) ui.newComplaint.text = t.value; }
 
 /* ---------- actions ---------- */
 document.addEventListener('click', async e => {
@@ -254,11 +312,20 @@ document.addEventListener('click', async e => {
       case 'new-request': ui.newReq = { cat: 'santeh', desc: '', specialist: 'any', slot: SLOT_OPTIONS[0] }; ui.tab = 'new'; render(); break;
       case 'cancel-request': ui.tab = 'requests'; render(); break;
       case 'open-request': ui.selectedRequestId = Number(b.dataset.id); ui.tab = 'request-detail'; render(); break;
+      case 'req-tab': ui.reqTab = b.dataset.t; render(); break;
       case 'pick-cat': captureDesc(); ui.newReq.cat = b.dataset.cat; render(); break;
       case 'pick-spec': captureDesc(); ui.newReq.specialist = b.dataset.spec; render(); break;
       case 'pick-slot': captureDesc(); ui.newReq.slot = b.dataset.slot; render(); break;
+      case 'pick-topic': captureComplaint(); ui.newComplaint.topic = b.dataset.topic; render(); break;
+      case 'new-complaint': ui.newComplaint = { topic: 'quality', text: '', requestId: null }; ui.tab = 'new-complaint'; render(); break;
+      case 'cancel-complaint': ui.tab = 'requests'; ui.reqTab = 'complaints'; render(); break;
       case 'demo-chat': toast('Чат с диспетчером откроется в MAX'); break;
-      case 'demo-complain': toast('Жалоба отправлена диспетчеру'); break;
+      case 'complain-request': {
+        const rid = Number(b.dataset.id);
+        ui.newComplaint = { topic: 'quality', text: '', requestId: rid };
+        ui.tab = 'new-complaint'; render();
+        break;
+      }
       case 'demo-call': toast('Звонок специалисту (демо)'); break;
       case 'toggle-notif': ui.notifOpen = !ui.notifOpen; render(); break;
       case 'close-notif': ui.notifOpen = false; render(); break;
@@ -286,6 +353,15 @@ document.addEventListener('click', async e => {
         await api.submitMeters(readings);
         await loadAll(); render();
         toast('Показания отправлены');
+        break;
+      }
+      case 'submit-complaint': {
+        captureComplaint();
+        const text = ui.newComplaint.text.trim();
+        if (!text) { toast('Опишите суть жалобы', true); break; }
+        const { complaint } = await api.createComplaint(ui.newComplaint.topic, text, ui.newComplaint.requestId);
+        await loadAll(); ui.tab = 'requests'; ui.reqTab = 'complaints'; render();
+        toast('Жалоба №' + complaint.id + ' отправлена');
         break;
       }
       case 'pay-now': await api.pay(); await loadAll(); render(); toast('Оплата прошла успешно'); break;

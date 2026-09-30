@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { store } from './db.js';
-import { CATS, SPECIALTIES, SLOTS, deriveEvents } from './seed.js';
+import { CATS, SPECIALTIES, SLOTS, COMPLAINT_TOPICS, deriveEvents } from './seed.js';
 import { validateLaunchParams, isProdAuth } from './max/validate.js';
 import { sendMessage, startBot, botEnabled } from './max/bot.js';
 
@@ -157,7 +157,6 @@ app.patch('/api/requests/:id', async (req, res) => {
   const r = db.requests.find(x => x.id === Number(req.params.id));
   if (!r) return res.status(404).json({ ok: false, error: 'Заявка не найдена' });
   const { action } = req.body || {};
-  const target = db.users[r.userId]?.maxUserId || db.users[r.userId]?.id;
 
   if (action === 'dispatch') {
     const name = String(req.body.name || '').trim();
@@ -166,17 +165,17 @@ app.patch('/api/requests/:id', async (req, res) => {
     if (!name) return res.status(400).json({ ok: false, error: 'Укажите имя мастера' });
     r.status = 'progress'; r.specialist = name; r.specialty = specialty; r.slot = slot;
     r.adminMsg = `Мастер ${name} (${specialty.toLowerCase()}) придёт ${slot.toLowerCase()}.`;
-    await notify(db, r, r.adminMsg, target);
+    await notify(db, r, r.adminMsg);
   } else if (action === 'message') {
     const text = String(req.body.text || '').trim();
     if (!text) return res.status(400).json({ ok: false, error: 'Введите сообщение' });
     r.adminMsg = text;
-    await notify(db, r, text, target);
+    await notify(db, r, text);
   } else if (action === 'done') {
     r.status = 'done';
     r.resolution = req.body.resolution?.trim() || (r.specialist ? `Выполнено мастером ${r.specialist}` : 'Выполнено');
     r.adminMsg = 'Заявка выполнена. Спасибо за обращение!';
-    await notify(db, r, r.adminMsg, target);
+    await notify(db, r, r.adminMsg);
   } else {
     return res.status(400).json({ ok: false, error: 'Неизвестное действие' });
   }
@@ -185,10 +184,16 @@ app.patch('/api/requests/:id', async (req, res) => {
   res.json({ ok: true, request: r });
 });
 
-async function notify(db, r, text, target) {
-  db.notifications.push({ id: store.nextId('notification'), userId: r.userId, requestId: r.id, text, date: db.today });
-  try { await sendMessage(target, `[Заявка №${r.id}] ${text}`); }
+// Уведомление жителю: пишем во внутреннюю ленту и шлём сообщение ботом в MAX.
+async function notifyUser(db, userId, text, prefix, extra = {}) {
+  db.notifications.push({ id: store.nextId('notification'), userId, text, date: db.today, ...extra });
+  const target = db.users[userId]?.maxUserId || db.users[userId]?.id;
+  try { await sendMessage(target, `${prefix} ${text}`); }
   catch (e) { console.error('[notify] ошибка отправки в MAX:', e.message); }
+}
+// Уведомление по заявке (совместимость с прежним кодом).
+async function notify(db, r, text) {
+  await notifyUser(db, r.userId, text, `[Заявка №${r.id}]`, { requestId: r.id });
 }
 
 app.get('/api/notifications', (req, res) => {
@@ -197,9 +202,55 @@ app.get('/api/notifications', (req, res) => {
   res.json({ notifications: db.notifications.filter(n => n.userId === user.id).reverse() });
 });
 
-// справочники для админки
+// ================= COMPLAINTS (жалобы) =================
+function complaintMeta(db, c) {
+  const u = db.users[c.userId];
+  return { ...c, topicLabel: COMPLAINT_TOPICS[c.topic]?.label || c.topic,
+    house: u?.house, apt: u?.apt, resident: u?.full };
+}
+
+app.get('/api/complaints', (req, res) => {
+  const db = store.data;
+  const scope = req.query.scope || 'mine';
+  const user = currentUser(req);
+  let list = db.complaints || [];
+  if (scope !== 'all') list = list.filter(c => c.userId === user.id);
+  res.json({ complaints: list.map(c => complaintMeta(db, c)).sort((a, b) => b.id - a.id) });
+});
+
+// житель подаёт жалобу
+app.post('/api/complaints', (req, res) => {
+  const db = store.data;
+  const user = currentUser(req);
+  const topic = COMPLAINT_TOPICS[req.body?.topic] ? req.body.topic : 'other';
+  const text = String(req.body?.text || '').trim();
+  const requestId = req.body?.requestId ? Number(req.body.requestId) : null;
+  if (!text) return res.status(400).json({ ok: false, error: 'Опишите суть жалобы' });
+  const id = store.nextId('complaint');
+  const c = { id, userId: user.id, topic, status: 'open', date: db.today, requestId, text, reply: '', replyDate: '' };
+  db.complaints.push(c);
+  store.save();
+  broadcast('complaint.created', { id });
+  res.json({ ok: true, complaint: complaintMeta(db, c) });
+});
+
+// диспетчер отвечает на жалобу
+app.patch('/api/complaints/:id', async (req, res) => {
+  const db = store.data;
+  const c = (db.complaints || []).find(x => x.id === Number(req.params.id));
+  if (!c) return res.status(404).json({ ok: false, error: 'Жалоба не найдена' });
+  const reply = String(req.body?.reply || '').trim();
+  if (!reply) return res.status(400).json({ ok: false, error: 'Введите ответ жителю' });
+  c.reply = reply; c.replyDate = db.today; c.status = 'answered';
+  await notifyUser(db, c.userId, reply, `[Жалоба №${c.id}]`, { complaintId: c.id });
+  store.save();
+  broadcast('complaint.updated', { id: c.id, status: c.status });
+  res.json({ ok: true, complaint: complaintMeta(db, c) });
+});
+
+// справочники для админки и форм
 app.get('/api/dictionaries', (req, res) => {
-  res.json({ specialties: SPECIALTIES, slots: SLOTS, categories: CATS });
+  res.json({ specialties: SPECIALTIES, slots: SLOTS, categories: CATS, complaintTopics: COMPLAINT_TOPICS });
 });
 
 // ================= STATIC FRONTEND =================

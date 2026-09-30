@@ -18,6 +18,9 @@ export const api = {
   requests: (scope = 'mine') => j(`/api/requests?scope=${scope}`),
   createRequest: (cat, desc) => j('/api/requests', { method: 'POST', headers: H, body: JSON.stringify({ cat, desc }) }),
   patchRequest: (id, body) => j(`/api/requests/${id}`, { method: 'PATCH', headers: H, body: JSON.stringify(body) }),
+  complaints: (scope = 'mine') => j(`/api/complaints?scope=${scope}`),
+  createComplaint: (topic, text, requestId = null) => j('/api/complaints', { method: 'POST', headers: H, body: JSON.stringify({ topic, text, requestId }) }),
+  replyComplaint: (id, reply) => j(`/api/complaints/${id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ reply }) }),
   adminReadings: () => j('/api/admin/readings'),
   notifications: () => j('/api/notifications'),
   dictionaries: () => j('/api/dictionaries'),
@@ -26,7 +29,7 @@ export const api = {
 // Живые обновления: возвращает EventSource. onEvent(name, data) вызывается на каждое событие.
 export function subscribe(onEvent) {
   const es = new EventSource('/api/events');
-  ['request.created', 'request.updated', 'meters.submitted', 'payment.paid']
+  ['request.created', 'request.updated', 'meters.submitted', 'payment.paid', 'complaint.created', 'complaint.updated']
     .forEach(name => es.addEventListener(name, e => onEvent(name, JSON.parse(e.data || '{}'))));
   return es;
 }

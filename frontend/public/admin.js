@@ -5,8 +5,8 @@ const CAT_ICON = { avaria: I.drop, musor: I.trash, svet: I.bulb, domofon: I.door
 const TINT = { blue: '--tint-blue', warm: '--tint-warm', amber: '--o-bg', green: '--g-bg' };
 const STATUS = { new: ['Новая', 'new'], progress: ['В работе', 'prog'], done: ['Выполнено', 'done'] };
 
-const model = { requests: [], readings: [], dict: { specialties: [], slots: [] } };
-const ui = { tab: 'requests', filter: 'all', selectedId: null };
+const model = { requests: [], complaints: [], readings: [], dict: { specialties: [], slots: [] } };
+const ui = { tab: 'requests', filter: 'all', selectedId: null, selectedComplaintId: null };
 
 const $ = s => document.querySelector(s);
 let toastT;
@@ -18,8 +18,15 @@ function toast(msg, err) {
 }
 
 async function load() {
-  const [reqs, reads, dict] = await Promise.all([api.requests('all'), api.adminReadings(), api.dictionaries()]);
-  model.requests = reqs.requests; model.readings = reads.readings; model.dict = dict;
+  const [reqs, comps, reads, dict] = await Promise.all([
+    api.requests('all'), api.complaints('all'), api.adminReadings(), api.dictionaries(),
+  ]);
+  model.requests = reqs.requests; model.complaints = comps.complaints;
+  model.readings = reads.readings; model.dict = dict;
+}
+
+function openComplaintsCount() {
+  return model.complaints.filter(c => c.status === 'open').length;
 }
 
 function counts() {
@@ -102,6 +109,54 @@ function detail() {
     </div>${form}`;
 }
 
+function complaintsList() {
+  const open = model.complaints.filter(c => c.status === 'open');
+  const answered = model.complaints.filter(c => c.status === 'answered');
+  const rows = model.complaints.slice().sort((a, b) => {
+    if ((a.status === 'open') !== (b.status === 'open')) return a.status === 'open' ? -1 : 1;
+    return b.id - a.id;
+  }).map(c => {
+    const st = c.status === 'answered' ? ['Отвечено', 'done'] : ['Открыта', 'prog'];
+    const link = c.requestId ? ` · заявка №${c.requestId}` : '';
+    return `<div class="arow" data-action="open-complaint" data-id="${c.id}">
+      <div class="cat">${I.flag}</div>
+      <div class="amain"><div class="att">${c.topicLabel}</div>
+        <div class="ameta"><span>№${c.id}</span><span>·</span><span>${c.house}, ${c.apt}</span><span>${c.date}${link}</span></div>
+        <div class="arow-sub">${c.text}</div></div>
+      <div class="aend"><span class="badge ${st[1]}">${st[0]}</span><span class="chev">${I.chev}</span></div></div>`;
+  }).join('') || `<div class="empty">${I.flag}<p>Жалоб пока нет</p></div>`;
+  return `
+    <div class="stat-row">
+      <div class="stat acc"><div class="sv tnum">${open.length}</div><div class="sl">Открытые</div></div>
+      <div class="stat"><div class="sv tnum">${answered.length}</div><div class="sl">Отвечено</div></div>
+      <div class="stat"><div class="sv tnum">${model.complaints.length}</div><div class="sl">Всего</div></div>
+    </div>${rows}`;
+}
+
+function complaintDetail() {
+  const c = model.complaints.find(x => x.id === ui.selectedComplaintId);
+  if (!c) return complaintsList();
+  const st = c.status === 'answered' ? ['Отвечено', 'done'] : ['Открыта', 'prog'];
+  const link = c.requestId ? `<div><div class="k">Связанная заявка</div><div class="v">№${c.requestId}</div></div>` : '';
+  const form = c.status === 'open'
+    ? `<div class="dcard"><div class="form-title">Ответ жителю</div>
+        <textarea class="inp" id="c-reply" placeholder="Например: приносим извинения, бригаде вынесено замечание, вопрос решён" style="min-height:84px"></textarea>
+        <div class="abtns" style="margin-top:12px"><button class="btn-primary" data-action="reply" data-id="${c.id}">Отправить ответ жителю</button></div></div>`
+    : `<div class="msg-sent">${I.check}<div><b>Ответ отправлен ${c.replyDate}:</b> ${c.reply}</div></div>`;
+  return `<button class="aback" data-action="back-complaint">${I.back} Все жалобы</button>
+    <div class="dcard">
+      <div class="dtop"><div class="cat">${I.flag}</div>
+        <div style="flex:1"><h3>${c.topicLabel}</h3><div class="dsub">Жалоба №${c.id} · ${c.date}</div></div>
+        <span class="badge ${st[1]}">${st[0]}</span></div>
+      <div class="ddesc">${c.text}</div>
+      <div class="dgrid">
+        <div><div class="k">Адрес</div><div class="v">${c.house}, ${c.apt}</div></div>
+        <div><div class="k">Заявитель</div><div class="v">${c.resident}</div></div>
+        <div><div class="k">Тема</div><div class="v">${c.topicLabel}</div></div>
+        ${link}</div>
+    </div>${form}`;
+}
+
 function readingsView() {
   if (!model.readings.length) {
     return `<div class="empty">${I.gauge}<p>Показания за сентябрь ещё не переданы.<br>Передайте их в мини-приложении жителя.</p></div>`;
@@ -118,9 +173,11 @@ function readingsView() {
 
 function render() {
   const c = counts();
-  const tabs = [['requests', 'Заявки', c.new], ['readings', 'Показания', null]];
+  const tabs = [['requests', 'Заявки', c.new], ['complaints', 'Жалобы', openComplaintsCount()], ['readings', 'Показания', null]];
   const tHtml = tabs.map(t => `<button class="${ui.tab === t[0] ? 'active' : ''}" data-action="atab" data-t="${t[0]}">${t[1]}${t[2] ? `<span class="cnt">${t[2]}</span>` : ''}</button>`).join('');
-  const body = ui.tab === 'readings' ? readingsView() : (ui.selectedId ? detail() : list());
+  const body = ui.tab === 'readings' ? readingsView()
+    : ui.tab === 'complaints' ? (ui.selectedComplaintId ? complaintDetail() : complaintsList())
+    : (ui.selectedId ? detail() : list());
   $('#stage').innerHTML = `<div class="admin">
     <div class="ahead"><div class="amark">${I.wrench}</div>
       <div class="grow"><h2>Диспетчерская УК</h2><p>«Ленинский-24» · оператор Марина</p></div>
@@ -135,10 +192,20 @@ document.addEventListener('click', async e => {
   const a = b.dataset.action, id = b.dataset.id ? +b.dataset.id : null;
   try {
     switch (a) {
-      case 'atab': ui.tab = b.dataset.t; ui.selectedId = null; render(); break;
+      case 'atab': ui.tab = b.dataset.t; ui.selectedId = null; ui.selectedComplaintId = null; render(); break;
       case 'filter': ui.filter = b.dataset.f; render(); break;
       case 'open': ui.selectedId = id; render(); break;
       case 'back': ui.selectedId = null; render(); break;
+      case 'open-complaint': ui.selectedComplaintId = id; render(); break;
+      case 'back-complaint': ui.selectedComplaintId = null; render(); break;
+      case 'reply': {
+        const reply = ($('#c-reply') || {}).value?.trim();
+        if (!reply) { toast('Введите ответ жителю', true); break; }
+        await api.replyComplaint(id, reply);
+        await load(); render();
+        toast('Ответ отправлен жителю');
+        break;
+      }
       case 'dispatch': {
         const name = ($('#f-name') || {}).value?.trim();
         const specialty = ($('#f-specialty') || {}).value;

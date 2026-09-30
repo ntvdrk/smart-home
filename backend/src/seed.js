@@ -16,6 +16,16 @@ export const SLOTS = [
   'Завтра, 10:00–12:00','Завтра, 12:00–14:00','22 сентября, 09:00–11:00',
 ];
 
+// Темы жалоб жителя (жалоба — отдельная сущность от заявки на ремонт).
+export const COMPLAINT_TOPICS = {
+  quality:  { label: 'Качество работ' },
+  behavior: { label: 'Поведение сотрудника' },
+  deadline: { label: 'Сроки' },
+  payment:  { label: 'Поборы / оплата' },
+  cleaning: { label: 'Уборка и содержание' },
+  other:    { label: 'Другое' },
+};
+
 export function seedData() {
   const userId = 'u-anna';
   return {
@@ -65,8 +75,19 @@ export function seedData() {
         date: '17 сентября', desc: 'На лестничной клетке между 4 и 5 этажом не горит свет.',
         specialist: '', specialty: '', slot: '', resolution: '', adminMsg: '' },
     ],
+    complaints: [
+      { id: 41, userId, topic: 'deadline', status: 'answered',
+        date: '14 сентября', requestId: 214,
+        text: 'Заявку по течи в подъезде обещали закрыть за день, а мастер пришёл только на третьи сутки.',
+        reply: 'Приносим извинения за задержку. Заявка выполнена, бригаде вынесено замечание за срыв срока.',
+        replyDate: '15 сентября' },
+      { id: 42, userId, topic: 'cleaning', status: 'open',
+        date: '17 сентября', requestId: null,
+        text: 'Уже неделю не убирают на 5 этаже, мусор у лифта.',
+        reply: '', replyDate: '' },
+    ],
     notifications: [],             // «сообщения жителю» (в реальном MAX — сообщения от бота)
-    counters: { request: 216, reading: 0, notification: 0 },
+    counters: { request: 216, reading: 0, notification: 0, complaint: 42 },
   };
 }
 
@@ -83,5 +104,9 @@ export function deriveEvents(db, userId) {
   for (const r of mine.filter(r => r.status === 'done')) {
     items.push({ kind: 'ok', title: `Заявка №${r.id} выполнена`, sub: r.resolution || r.title });
   }
-  return items.slice(0, 4);
+  const myComplaints = (db.complaints || []).filter(c => c.userId === userId);
+  for (const c of myComplaints.filter(c => c.status === 'answered')) {
+    items.push({ kind: 'info', title: `Ответ на жалобу №${c.id}`, sub: c.reply });
+  }
+  return items.slice(0, 5);
 }
