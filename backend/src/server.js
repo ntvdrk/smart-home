@@ -64,7 +64,15 @@ function broadcast(event, data = {}) {
 app.post('/api/auth', (req, res) => {
   const { launchParams } = req.body || {};
   const result = validateLaunchParams(launchParams);
-  if (!result.ok) return res.status(401).json({ ok: false, reason: result.reason });
+  if (!result.ok) {
+    // Демо-режим для публичного показа: если приложение открыли НЕ из MAX
+    // (нет подписи) и включён ALLOW_DEMO_LOGIN=1 — пускаем как демо-жителя.
+    // Так присланная ссылка открывается и в обычном браузере, и внутри MAX.
+    if (process.env.ALLOW_DEMO_LOGIN === '1') {
+      return res.json({ ok: true, mode: 'demo', prodAuth: isProdAuth(), user: store.data.users['u-anna'] });
+    }
+    return res.status(401).json({ ok: false, reason: result.reason });
+  }
 
   const user = store.data.users['u-anna'];
   if (result.identity?.maxUserId && result.identity.maxUserId !== 'demo') {
