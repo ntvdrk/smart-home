@@ -1,5 +1,7 @@
 import { I } from './icons.js';
-import { api, subscribe } from './api.js';
+import { api, subscribe, setAdminToken } from './api.js';
+
+const TOKEN_KEY = 'admin-token';
 
 const CAT_ICON = { avaria: I.drop, musor: I.trash, svet: I.bulb, domofon: I.door, lift: I.elevator, other: I.dots };
 const TINT = { blue: '--tint-blue', warm: '--tint-warm', amber: '--o-bg', green: '--g-bg' };
@@ -181,7 +183,8 @@ function render() {
   $('#stage').innerHTML = `<div class="admin">
     <div class="ahead"><div class="amark">${I.wrench}</div>
       <div class="grow"><h2>Диспетчерская УК</h2><p>«Ленинский-24» · оператор Марина</p></div>
-      <div class="live"><span class="pulse"></span>Онлайн</div></div>
+      <div class="live"><span class="pulse"></span>Онлайн</div>
+      <button class="logout-btn" data-action="logout" title="Выйти">Выйти</button></div>
     <div class="atabs">${tHtml}</div>
     <div class="abody">${body}</div></div>`;
 }
@@ -192,6 +195,20 @@ document.addEventListener('click', async e => {
   const a = b.dataset.action, id = b.dataset.id ? +b.dataset.id : null;
   try {
     switch (a) {
+      case 'do-login': {
+        const pass = ($('#admin-pass') || {}).value || '';
+        if (!pass) { renderLogin('Введите пароль'); break; }
+        try {
+          const { token } = await api.adminLogin(pass);
+          setAdminToken(token);
+          try { sessionStorage.setItem(TOKEN_KEY, token); } catch { /* нет доступа */ }
+          await loadAndRender();
+        } catch (err) {
+          renderLogin(err.status === 401 ? 'Неверный пароль' : (err.message || 'Ошибка входа'));
+        }
+        break;
+      }
+      case 'logout': logout(); break;
       case 'atab': ui.tab = b.dataset.t; ui.selectedId = null; ui.selectedComplaintId = null; render(); break;
       case 'filter': ui.filter = b.dataset.f; render(); break;
       case 'open': ui.selectedId = id; render(); break;
@@ -234,18 +251,56 @@ document.addEventListener('click', async e => {
   } catch (err) { toast(err.message || 'Ошибка', true); }
 });
 
-/* ---------- live ---------- */
-function setConn(on) { const c = $('#conn'); c.className = 'conn' + (on ? ' on' : ''); c.innerHTML = '<span class="d"></span>' + (on ? 'обновления в реальном времени' : 'переподключение…'); }
+/* ---------- вход диспетчера ---------- */
+function renderLogin(errMsg) {
+  $('#stage').innerHTML = `<div class="admin login">
+    <div class="ahead"><div class="amark">${I.wrench}</div>
+      <div class="grow"><h2>Диспетчерская УК</h2><p>Вход для сотрудников</p></div></div>
+    <div class="abody">
+      <div class="login-box">
+        <div class="login-title">Вход в панель диспетчера</div>
+        <div class="login-sub">Панель предназначена для сотрудников управляющей компании.</div>
+        <div class="field-lbl" style="margin-left:0">Пароль сотрудника</div>
+        <input class="inp" id="admin-pass" type="password" placeholder="Введите пароль" style="border-radius:11px;padding:12px 13px"
+          onkeydown="if(event.key==='Enter')document.getElementById('admin-login-btn').click()">
+        ${errMsg ? `<div class="login-err">${I.warn}<span>${errMsg}</span></div>` : ''}
+        <button class="btn-primary" id="admin-login-btn" data-action="do-login" style="width:100%;margin-top:14px">Войти</button>
+      </div>
+    </div></div>`;
+  const el = $('#admin-pass'); if (el) el.focus();
+}
 
-async function start() {
-  try {
-    await load(); render();
-    const es = subscribe(async () => { await load(); render(); });
+let subscribed = false;
+async function loadAndRender() {
+  await load(); render();
+  if (!subscribed) {
+    subscribed = true;
+    const es = subscribe(async () => { try { await load(); render(); } catch { /* игнор */ } });
     es.onopen = () => setConn(true);
     es.onerror = () => setConn(false);
-    setConn(true);
+  }
+  setConn(true);
+}
+
+function logout() {
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* нет доступа */ }
+  setAdminToken(null);
+  renderLogin();
+}
+
+/* ---------- live ---------- */
+function setConn(on) { const c = $('#conn'); if (!c) return; c.className = 'conn' + (on ? ' on' : ''); c.innerHTML = '<span class="d"></span>' + (on ? 'обновления в реальном времени' : 'переподключение…'); }
+
+async function start() {
+  let token = null;
+  try { token = sessionStorage.getItem(TOKEN_KEY); } catch { /* нет доступа */ }
+  if (!token) { renderLogin(); return; }
+  setAdminToken(token);
+  try {
+    await loadAndRender();
   } catch (err) {
-    $('#stage').innerHTML = `<div class="empty" style="margin:60px auto">${I.warn}<p>Не удалось загрузить данные.<br>${err.message}</p></div>`;
+    if (err.status === 401) { logout(); }
+    else $('#stage').innerHTML = `<div class="empty" style="margin:60px auto">${I.warn}<p>Не удалось загрузить данные.<br>${err.message}</p></div>`;
   }
 }
 start();

@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { store } from './db.js';
@@ -18,6 +19,27 @@ function currentUser(req) {
   const id = req.get('x-user-id') || 'u-anna';
   return store.data.users[id] || store.data.users['u-anna'];
 }
+
+// ================= AUTH ДИСПЕТЧЕРА =================
+// Простой вход сотрудника УК: общий пароль (ADMIN_PASSWORD, по умолчанию «admin»).
+// После входа выдаётся токен сессии (в памяти сервера); админ-эндпоинты требуют его.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+const adminTokens = new Set();
+function isAdmin(req) {
+  const t = req.get('x-admin-token');
+  return Boolean(t && adminTokens.has(t));
+}
+function requireAdmin(req, res, next) {
+  if (isAdmin(req)) return next();
+  return res.status(401).json({ ok: false, error: 'Требуется вход диспетчера' });
+}
+app.post('/api/admin/login', (req, res) => {
+  const password = String(req.body?.password || '');
+  if (password !== ADMIN_PASSWORD) return res.status(401).json({ ok: false, error: 'Неверный пароль' });
+  const token = crypto.randomUUID();
+  adminTokens.add(token);
+  res.json({ ok: true, token });
+});
 
 // ================= SSE (живые обновления) =================
 const clients = new Set();
@@ -114,7 +136,7 @@ app.post('/api/meters', (req, res) => {
 });
 
 // admin: список показаний
-app.get('/api/admin/readings', (req, res) => {
+app.get('/api/admin/readings', requireAdmin, (req, res) => {
   const db = store.data;
   const readings = db.readings.map(r => {
     const m = db.meters.find(x => x.id === r.meterId);
@@ -129,6 +151,7 @@ app.get('/api/requests', (req, res) => {
   const db = store.data;
   const scope = req.query.scope || 'mine';
   const user = currentUser(req);
+  if (scope === 'all' && !isAdmin(req)) return res.status(401).json({ ok: false, error: 'Требуется вход диспетчера' });
   let list = db.requests;
   if (scope !== 'all') list = list.filter(r => r.userId === user.id);
   const withMeta = list.map(r => ({ ...r, catLabel: CATS[r.cat]?.label || r.cat, house: db.users[r.userId]?.house, apt: db.users[r.userId]?.apt, resident: db.users[r.userId]?.full }));
@@ -152,7 +175,7 @@ app.post('/api/requests', (req, res) => {
 });
 
 // диспетчер: назначение / сообщение / выполнение
-app.patch('/api/requests/:id', async (req, res) => {
+app.patch('/api/requests/:id', requireAdmin, async (req, res) => {
   const db = store.data;
   const r = db.requests.find(x => x.id === Number(req.params.id));
   if (!r) return res.status(404).json({ ok: false, error: 'Заявка не найдена' });
@@ -213,6 +236,7 @@ app.get('/api/complaints', (req, res) => {
   const db = store.data;
   const scope = req.query.scope || 'mine';
   const user = currentUser(req);
+  if (scope === 'all' && !isAdmin(req)) return res.status(401).json({ ok: false, error: 'Требуется вход диспетчера' });
   let list = db.complaints || [];
   if (scope !== 'all') list = list.filter(c => c.userId === user.id);
   res.json({ complaints: list.map(c => complaintMeta(db, c)).sort((a, b) => b.id - a.id) });
@@ -235,7 +259,7 @@ app.post('/api/complaints', (req, res) => {
 });
 
 // диспетчер отвечает на жалобу
-app.patch('/api/complaints/:id', async (req, res) => {
+app.patch('/api/complaints/:id', requireAdmin, async (req, res) => {
   const db = store.data;
   const c = (db.complaints || []).find(x => x.id === Number(req.params.id));
   if (!c) return res.status(404).json({ ok: false, error: 'Жалоба не найдена' });
